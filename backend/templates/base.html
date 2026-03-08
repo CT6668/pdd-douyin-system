@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}带货运营系统{% endblock %}</title>
+  <style>
+    :root {
+      --primary: #FF4D4F;
+      --primary-light: #fff1f0;
+      --accent: #1890FF;
+      --success: #52C41A;
+      --warning: #FAAD14;
+      --bg: #F5F6FA;
+      --card: #FFFFFF;
+      --text: #1A1A1A;
+      --text-muted: #8C8C8C;
+      --border: #E8E8E8;
+      --radius: 12px;
+      --shadow: 0 2px 12px rgba(0,0,0,0.08);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+           background: var(--bg); color: var(--text); font-size: 14px; }
+
+    /* ── 顶部导航 ── */
+    .topbar {
+      background: #fff;
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      position: sticky; top: 0; z-index: 100;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .topbar .logo {
+      font-size: 16px; font-weight: 700; color: var(--primary);
+      white-space: nowrap;
+    }
+    .topbar .logo span { color: var(--text); }
+    .nav-links { display: flex; gap: 4px; flex: 1; }
+    .nav-links a {
+      padding: 6px 16px; border-radius: 8px; text-decoration: none;
+      color: var(--text-muted); font-size: 14px; font-weight: 500;
+      transition: all 0.15s;
+    }
+    .nav-links a:hover { background: var(--bg); color: var(--text); }
+    .nav-links a.active { background: var(--primary-light); color: var(--primary); }
+    .topbar .date-badge {
+      font-size: 12px; color: var(--text-muted);
+      background: var(--bg); padding: 4px 10px; border-radius: 6px;
+    }
+
+    /* ── 主内容区 ── */
+    .main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+
+    /* ── 卡片 ── */
+    .card {
+      background: var(--card); border-radius: var(--radius);
+      box-shadow: var(--shadow); padding: 20px;
+      margin-bottom: 20px;
+    }
+    .card-title {
+      font-size: 15px; font-weight: 600; margin-bottom: 16px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .card-title .sub { color: var(--text-muted); font-size: 12px; font-weight: 400; }
+
+    /* ── 数字卡片 ── */
+    .stat-row { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+    .stat-card {
+      background: var(--card); border-radius: var(--radius);
+      box-shadow: var(--shadow); padding: 18px 24px;
+      flex: 1; min-width: 140px;
+    }
+    .stat-card .label { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+    .stat-card .value { font-size: 28px; font-weight: 700; color: var(--text); }
+    .stat-card .value.red { color: var(--primary); }
+    .stat-card .value.blue { color: var(--accent); }
+    .stat-card .value.green { color: var(--success); }
+    .stat-card .sub-value { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+    /* ── 表格 ── */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table th {
+      background: #FAFAFA; text-align: left; padding: 10px 12px;
+      font-weight: 500; color: var(--text-muted); border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    table td {
+      padding: 10px 12px; border-bottom: 1px solid #F5F5F5;
+      vertical-align: middle;
+    }
+    table tr:hover td { background: #FAFBFF; }
+    table .rank { font-weight: 700; color: var(--text-muted); }
+    table .rank.top3 { color: var(--primary); }
+
+    /* ── 状态标签 ── */
+    .tag {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      font-size: 11px; font-weight: 500;
+    }
+    .tag-approved  { background: #F6FFED; color: var(--success); }
+    .tag-draft     { background: #FFF7E6; color: var(--warning); }
+    .tag-rejected  { background: #FFF1F0; color: var(--primary); }
+    .tag-published { background: #E6F4FF; color: var(--accent); }
+    .tag-pending   { background: #F5F5F5; color: var(--text-muted); }
+    .tag-douyin    { background: #1A1A1A; color: #fff; }
+    .tag-xhs       { background: #FF2442; color: #fff; }
+    .tag-rising    { background: #F6FFED; color: var(--success); }
+    .tag-stable    { background: #F5F5F5; color: var(--text-muted); }
+    .tag-falling   { background: #FFF1F0; color: var(--primary); }
+
+    /* ── 进度条 ── */
+    .progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+    .progress-fill { height: 100%; border-radius: 3px; background: var(--primary); transition: width 0.3s; }
+
+    /* ── 商品缩略图 ── */
+    .product-thumb { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; background: var(--border); }
+    .product-info { display: flex; align-items: center; gap: 10px; }
+    .product-info .name { font-size: 13px; max-width: 200px; }
+    .product-info .name a { color: var(--text); text-decoration: none; }
+    .product-info .name a:hover { color: var(--primary); }
+    .product-info .meta { font-size: 11px; color: var(--text-muted); }
+
+    /* ── 按钮 ── */
+    .btn {
+      display: inline-block; padding: 6px 14px; border-radius: 6px; cursor: pointer;
+      border: 1px solid transparent; font-size: 13px; font-weight: 500;
+      transition: all 0.15s; text-decoration: none;
+    }
+    .btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .btn-primary:hover { background: #ff7875; }
+    .btn-default { background: #fff; color: var(--text); border-color: var(--border); }
+    .btn-default:hover { border-color: var(--primary); color: var(--primary); }
+    .btn-sm { padding: 3px 10px; font-size: 12px; }
+
+    /* ── 筛选条 ── */
+    .filter-bar { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+    .filter-bar select, .filter-bar input[type=date] {
+      padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 13px; background: #fff; color: var(--text);
+    }
+    .filter-bar select:focus, .filter-bar input:focus { outline: none; border-color: var(--accent); }
+
+    /* ── 分组格子（类目卡）── */
+    .cat-grid { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+    .cat-card {
+      background: var(--card); border-radius: 10px; padding: 14px 18px;
+      box-shadow: var(--shadow); min-width: 120px; cursor: pointer;
+      border: 2px solid transparent; transition: all 0.15s;
+    }
+    .cat-card:hover { border-color: var(--primary); }
+    .cat-card .cat-name { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+    .cat-card .cat-sub  { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+    .cat-card .cat-score { font-size: 22px; font-weight: 700; color: var(--primary); }
+    .cat-card .cat-trend { font-size: 11px; }
+
+    /* ── 脚本展开区 ── */
+    .script-detail {
+      background: #FAFBFF; border-radius: 8px; padding: 16px;
+      margin-top: 8px; border: 1px solid var(--border);
+    }
+    .script-section { margin-bottom: 12px; }
+    .script-section .sec-title { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; font-weight: 600; }
+    .script-section .sec-content { font-size: 13px; line-height: 1.7; }
+    .storyboard-item {
+      display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border);
+    }
+    .storyboard-item:last-child { border-bottom: none; }
+    .storyboard-item .time-badge {
+      background: var(--primary); color: #fff; border-radius: 4px;
+      padding: 2px 8px; font-size: 11px; white-space: nowrap; height: fit-content;
+    }
+
+    /* ── 复盘页 ── */
+    .review-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .suggest-list { list-style: none; }
+    .suggest-list li {
+      padding: 10px 14px; border-radius: 8px; background: var(--bg);
+      margin-bottom: 8px; font-size: 13px; line-height: 1.6;
+    }
+
+    /* ── 空状态 ── */
+    .empty-state {
+      text-align: center; padding: 60px 0; color: var(--text-muted);
+    }
+    .empty-state .icon { font-size: 40px; margin-bottom: 10px; }
+    .empty-state .msg  { font-size: 14px; }
+
+    /* ── Loading ── */
+    .loading { text-align: center; padding: 40px; color: var(--text-muted); font-size: 13px; }
+
+    /* ── 评分雷达/条形 ── */
+    .score-bar-list { display: flex; flex-direction: column; gap: 8px; }
+    .score-bar-item { display: flex; align-items: center; gap: 10px; }
+    .score-bar-item .dim-label { width: 120px; font-size: 12px; color: var(--text-muted); text-align: right; }
+    .score-bar-item .bar { flex: 1; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+    .score-bar-item .bar .fill { height: 100%; border-radius: 4px; background: var(--primary); }
+    .score-bar-item .score-val { width: 30px; font-size: 12px; font-weight: 600; color: var(--text); }
+
+    /* ── 时间线 ── */
+    .timeline { position: relative; padding-left: 20px; }
+    .timeline::before { content: ''; position: absolute; left: 6px; top: 0; bottom: 0; width: 2px; background: var(--border); }
+    .timeline-item { position: relative; margin-bottom: 16px; }
+    .timeline-item::before {
+      content: ''; position: absolute; left: -17px; top: 4px;
+      width: 8px; height: 8px; border-radius: 50%; background: var(--primary);
+    }
+    .timeline-item .time { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+    .timeline-item .content-text { font-size: 13px; }
+
+    @media (max-width: 768px) {
+      .review-grid { grid-template-columns: 1fr; }
+      .main { padding: 16px; }
+      .stat-row { gap: 10px; }
+      .stat-card { min-width: 100px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo">🛍️ 带货<span>运营系统</span></div>
+  <nav class="nav-links">
+    <a href="/dashboard" class="{{ 'active' if active=='dashboard' else '' }}">📊 选品看板</a>
+    <a href="/content"   class="{{ 'active' if active=='content'   else '' }}">✍️ 内容看板</a>
+    <a href="/publish"   class="{{ 'active' if active=='publish'   else '' }}">🚀 发布队列</a>
+    <a href="/review"    class="{{ 'active' if active=='review'    else '' }}">📈 复盘看板</a>
+  </nav>
+  <div class="date-badge" id="topbar-date">加载中...</div>
+</div>
+
+<div class="main">
+  {% block content %}{% endblock %}
+</div>
+
+<script>
+// 全局工具
+const TODAY = new Date().toISOString().split('T')[0];
+document.getElementById('topbar-date').textContent = TODAY.replace(/-/g, '/') + ' ' + ['周日','周一','周二','周三','周四','周五','周六'][new Date().getDay()];
+
+async function apiFetch(url) {
+  try {
+    const res = await fetch(url);
+    return await res.json();
+  } catch(e) {
+    console.error('API Error:', url, e);
+    return null;
+  }
+}
+
+async function apiPatch(url, data) {
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data),
+  });
+  return await res.json();
+}
+
+function statusTag(status) {
+  const map = {
+    'approved':      '<span class="tag tag-approved">✅ 已审核</span>',
+    'draft':         '<span class="tag tag-draft">📝 草稿</span>',
+    'rejected':      '<span class="tag tag-rejected">❌ 已拒绝</span>',
+    'published':     '<span class="tag tag-published">🚀 已发布</span>',
+    'pending_review':'<span class="tag tag-pending">⏳ 待审核</span>',
+    'pending':       '<span class="tag tag-pending">⏸ 待处理</span>',
+    'selected':      '<span class="tag tag-approved">✅ 已选中</span>',
+    'scored':        '<span class="tag tag-published">📊 已评分</span>',
+  };
+  return map[status] || `<span class="tag tag-pending">${status}</span>`;
+}
+
+function platformTag(platform) {
+  if (platform === 'douyin') return '<span class="tag tag-douyin">🎵 抖音</span>';
+  if (platform === 'xiaohongshu') return '<span class="tag tag-xhs">📕 小红书</span>';
+  return `<span class="tag tag-pending">${platform}</span>`;
+}
+
+function trendTag(trend) {
+  const map = { rising: '📈 上升', stable: '➡️ 平稳', falling: '📉 下降' };
+  const cls  = { rising: 'rising', stable: 'stable', falling: 'falling' };
+  return `<span class="tag tag-${cls[trend] || 'stable'}">${map[trend] || trend}</span>`;
+}
+
+function scoreColor(score) {
+  if (score >= 80) return '#52C41A';
+  if (score >= 60) return '#FAAD14';
+  return '#FF4D4F';
+}
+</script>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

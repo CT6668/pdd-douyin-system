@@ -1,0 +1,261 @@
+# ============================================================
+# 拼多多→抖音带货运营系统 · 主配置文件
+# 版本：v1.0  更新日期：2026-03-08
+# 注意：涉及账号/密钥的字段请在 config.local.yaml 中覆盖
+#       config.local.yaml 已加入 .gitignore，不提交代码库
+# ============================================================
+
+# ─────────────────────────────────────────────
+# 系统基础配置
+# ─────────────────────────────────────────────
+system:
+  name: "pdd-douyin-system"
+  version: "1.0.0"
+  timezone: "Asia/Shanghai"
+  debug: false
+  log_level: "INFO"          # DEBUG / INFO / WARNING / ERROR
+
+# ─────────────────────────────────────────────
+# 路径配置
+# ─────────────────────────────────────────────
+paths:
+  db: "data/db/main.db"
+  logs: "logs/"
+  raw_data: "data/raw/"
+  processed: "data/processed/"
+  cache: "data/cache/"
+  materials_pending: "materials/pending/"
+  materials_approved: "materials/approved/"
+  materials_published: "materials/published/"
+  reports_daily: "reports/daily/"
+  reports_weekly: "reports/weekly/"
+
+# ─────────────────────────────────────────────
+# 当前阶段聚焦垂类
+# ─────────────────────────────────────────────
+focus:
+  phase: "mvp"
+  categories:
+    - name: "办公居家桌面有趣小摆件"
+      keywords:
+        - "桌面摆件"
+        - "办公桌摆件"
+        - "桌面解压"
+        - "桌面好物"
+        - "桌面小物件"
+        - "办公室小摆件"
+        - "有趣摆件"
+        - "桌面创意"
+        - "解压玩具桌面"
+        - "桌面幸福感"
+      price_range:
+        min: 9.9
+        max: 99.0           # 冲动消费区间
+      target_commission_min: 0.5   # 最低单件佣金（元）
+
+# ─────────────────────────────────────────────
+# 选品评分配置
+# ─────────────────────────────────────────────
+scoring:
+  active_version: "v1"
+  min_total_score: 60        # 进入内容池的最低总分
+  daily_top_n: 10            # 每日推荐Top N商品
+  weights:
+    s01_pdd_heat: 0.10       # 拼多多热度
+    s02_growth_7d: 0.10      # 近7天增速
+    s03_trend_30d: 0.05      # 近30天趋势
+    s04_douyin_fit: 0.15     # 抖音传播适配度（权重最高）
+    s05_visual_strength: 0.10  # 视觉展示强度
+    s06_low_explain: 0.08    # 低解释成本
+    s07_low_decision: 0.08   # 低决策成本
+    s08_impulse_price: 0.08  # 价格带适合冲动消费
+    s09_commission_val: 0.10 # 佣金价值
+    s10_competition: 0.05    # 竞争难度（低竞争得高分）
+    s11_supply_stable: 0.05  # 供给稳定性
+    s12_compliance_risk: 0.04  # 合规风险（低风险得高分）
+    s13_refund_risk: 0.02    # 退货/售后风险（低风险得高分）
+
+# 评分维度的参考标准（用于人工打分参考）
+scoring_guide:
+  s04_douyin_fit:
+    10: "强视觉冲击，0解释，看1秒就懂"
+    8: "视觉不错，几乎不需要解释"
+    6: "需要简单介绍，但不复杂"
+    4: "需要一定解释成本"
+    2: "很难用短视频展示"
+  s08_impulse_price:
+    10: "9.9-29.9元，几乎无决策成本"
+    8: "30-49元，略微考虑即下单"
+    6: "50-79元，有一点决策门槛"
+    4: "80-99元，需要思考"
+    2: "100元以上，非冲动消费"
+
+# ─────────────────────────────────────────────
+# 内容生成配置（双平台：抖音 + 小红书）
+# ─────────────────────────────────────────────
+content:
+  # 启用平台：同时生成抖音短视频脚本 + 小红书图文笔记
+  platforms:
+    - "douyin"         # 抖音竖屏短视频（15s），挂橱窗商品卡
+    - "xiaohongshu"    # 小红书图文笔记（6张图），支持内挂/推广链接
+
+  # 4类脚本/笔记类型（双平台共用）
+  script_types:
+    - "pain_point"    # 痛点型
+    - "scene"         # 场景型
+    - "contrast"      # 反差型
+    - "list"          # 清单型
+
+  # 抖音专属配置
+  douyin:
+    max_duration_seconds: 15   # 最大视频时长（秒）
+    hook_duration_seconds: 3   # 钩子时长（秒）
+    cta_styles:
+      - "点击橱窗直接买"
+      - "链接在评论区"
+      - "戳视频左下角"
+      - "评论区置顶有链接"
+
+  # 小红书专属配置
+  xiaohongshu:
+    img_count: 6               # 每篇图文建议图片数量
+    max_body_chars: 1000       # 正文最大字数
+    hashtag_count: 10          # 话题标签数量
+    # 推广链接放置策略（按优先级排列）
+    link_placement_priority:
+      - "inner_mount"          # 1. 内挂商品卡（联盟商品，需申请小红书联盟）
+      - "comment"              # 2. 评论区置顶推广链接（多多进宝链接）
+      - "profile"              # 3. 个人主页链接（备选）
+    # 注意：小红书禁止在正文中放外链，推广链接只能走以上3种方式
+
+# 合规红线关键词（脚本中不得出现）
+compliance:
+  forbidden_keywords:
+    - "治疗"
+    - "治愈"
+    - "功效"
+    - "包治"
+    - "保证"
+    - "最好"
+    - "第一"
+    - "绝对"
+    - "100%"
+    - "专利"         # 除非有真实专利证明
+    - "国家认证"
+    - "医院推荐"
+  high_risk_categories:
+    - "食品功效宣称"
+    - "医疗器械"
+    - "保健品"
+
+# ─────────────────────────────────────────────
+# 发布建议配置（双平台）
+# ─────────────────────────────────────────────
+publish:
+  # 抖音推荐发布时间段（本垂类参考）
+  douyin:
+    recommended_time_slots:
+      - label: "早间通勤"
+        time: "07:30-08:30"
+        reason: "办公族刷手机高峰"
+      - label: "午休"
+        time: "12:00-13:30"
+        reason: "打工人休息刷内容"
+      - label: "傍晚下班"
+        time: "17:30-19:00"
+        reason: "下班放松高流量"
+      - label: "晚间黄金"
+        time: "20:00-22:30"
+        reason: "全天最高流量时段"
+    mount_types:
+      - "橱窗挂载"     # 优先
+      - "视频内商品卡" # 次选
+
+  # 小红书推荐发布时间段
+  xiaohongshu:
+    recommended_time_slots:
+      - label: "早起刷书"
+        time: "07:00-09:00"
+        reason: "早起刷小红书高峰"
+      - label: "午休"
+        time: "11:30-13:00"
+        reason: "小红书午休活跃度最高"
+      - label: "下班刷机"
+        time: "18:00-20:00"
+        reason: "下班通勤/饭后刷手机"
+      - label: "睡前"
+        time: "21:00-23:00"
+        reason: "睡前刷小红书，购买决策集中时段"
+    # 推广链接说明
+    promo_link_note: >
+      小红书正文不能直接放链接，只能通过：
+      1. 内挂商品卡（需加入小红书联盟，适合稳定合作商品）；
+      2. 评论区置顶推广链接（多多进宝链接，灵活但需手动操作）；
+      3. 个人主页链接（流量较低，备选）。
+      ⚠️ 发布时请人工确认链接类型并手动操作，系统不自动发布。
+
+# ─────────────────────────────────────────────
+# 数据采集配置（当前阶段：半自动/手动）
+# ─────────────────────────────────────────────
+data_collection:
+  mode: "manual"             # manual / semi_auto / auto（当前只允许manual）
+  # ⚠️ 高风险提示：以下配置项预留，当前阶段不启用
+  # pdd_api:
+  #   app_id: ""             # 需申请拼多多多多进宝API
+  #   app_secret: ""         # 存放在 config.local.yaml
+  #   rate_limit_per_min: 60
+  # crawl:
+  #   enabled: false         # ⚠️ 当前禁止爬虫
+  #   respect_robots: true
+  #   request_interval_s: 5
+
+# ─────────────────────────────────────────────
+# AI 生成配置（用于脚本生成）
+# ─────────────────────────────────────────────
+ai:
+  provider: "openai"         # openai / anthropic / local
+  model: "gpt-4o"
+  temperature: 0.7
+  max_tokens: 2000
+  # api_key 存放在 config.local.yaml 或环境变量 OPENAI_API_KEY
+
+# ─────────────────────────────────────────────
+# 后台服务配置
+# ─────────────────────────────────────────────
+backend:
+  host: "127.0.0.1"         # 仅本地访问
+  port: 5001
+  debug: true
+  secret_key: "change-me-in-local-config"
+
+# ─────────────────────────────────────────────
+# 每日任务流配置
+# ─────────────────────────────────────────────
+daily_runner:
+  # 每日自动执行时间（cron格式，如需定时可配置）
+  auto_run_time: "09:00"
+  tasks:
+    - id: "category_radar"
+      name: "类目雷达更新"
+      enabled: true
+      requires_human: false
+    - id: "product_pool_refresh"
+      name: "候选商品池刷新"
+      enabled: true
+      requires_human: false
+    - id: "product_scoring"
+      name: "商品自动评分"
+      enabled: true
+      requires_human: true   # ✅ 评分结果需人工确认
+    - id: "content_generation"
+      name: "双平台内容生成（抖音脚本 + 小红书图文）"
+      enabled: true
+      requires_human: true   # ✅ 脚本/笔记需人工审核，特别注意小红书推广链接类型
+    - id: "compliance_check"
+      name: "合规自动检查"
+      enabled: true
+      requires_human: true   # ✅ 合规结果需人工确认
+    - id: "daily_review"
+      name: "每日复盘报告生成"
+      enabled: true
+      requires_human: false

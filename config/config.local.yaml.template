@@ -1,0 +1,19 @@
+# ============================================================
+# 本地私密配置模板
+# 使用方法：复制本文件为 config.local.yaml，填入真实值
+# ⚠️ config.local.yaml 绝对不能提交到代码库！
+# ============================================================
+
+# AI 服务密钥
+ai:
+  api_key: "sk-xxxxxxxxxxxxxxxx"   # OpenAI API Key
+
+# 后台密钥
+backend:
+  secret_key: "your-secret-key-here"
+
+# 拼多多多多进宝（有需要时填写，当前阶段不启用）
+# data_collection:
+#   pdd_api:
+#     app_id: "your-app-id"
+#     app_secret: "your-app-secret"

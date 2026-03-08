@@ -1,0 +1,377 @@
+{% extends "base.html" %}
+{% block title %}内容看板 - 带货运营系统{% endblock %}
+
+{% block content %}
+<!-- 筛选条 -->
+<div class="card" style="padding:16px 20px;margin-bottom:16px">
+  <div class="filter-bar">
+    <input type="date" id="date-picker" />
+    <select id="platform-filter">
+      <option value="">全部平台</option>
+      <option value="douyin">🎵 抖音</option>
+      <option value="xiaohongshu">📕 小红书</option>
+    </select>
+    <select id="status-filter">
+      <option value="">全部状态</option>
+      <option value="draft">草稿</option>
+      <option value="pending_review">待审核</option>
+      <option value="approved">已审核</option>
+      <option value="rejected">已拒绝</option>
+      <option value="published">已发布</option>
+    </select>
+    <button class="btn btn-primary btn-sm" onclick="loadContent()">🔍 筛选</button>
+    <span style="color:#999;font-size:12px" id="content-total"></span>
+  </div>
+</div>
+
+<!-- 内容列表 -->
+<div class="card">
+  <div class="card-title">✍️ 已生成内容列表</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>商品</th>
+          <th>平台</th>
+          <th>脚本类型</th>
+          <th>封面文案</th>
+          <th>发布时间建议</th>
+          <th>素材</th>
+          <th>状态</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="content-tbody">
+        <tr><td colspan="8" class="loading">正在加载内容数据...</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div id="content-pagination" style="margin-top:12px;text-align:center;"></div>
+</div>
+
+<!-- 脚本详情展开区 -->
+<div class="card" id="script-detail-panel" style="display:none">
+  <div class="card-title" style="justify-content:space-between">
+    <span>🔍 脚本详情</span>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary btn-sm" id="btn-approve" onclick="approveScript()">✅ 审核通过</button>
+      <button class="btn btn-default btn-sm" id="btn-reject"  onclick="rejectScript()">❌ 驳回</button>
+      <button class="btn btn-default btn-sm" onclick="closeScriptDetail()">关闭</button>
+    </div>
+  </div>
+  <div id="script-detail-content"><div class="loading">加载中...</div></div>
+</div>
+
+<!-- 发布时间建议 -->
+<div class="card">
+  <div class="card-title">⏰ 今日发布时间建议</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px" id="schedule-grid">
+    <div class="loading">加载中...</div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentScriptId = null;
+let currentPage = 1;
+const datePicker = document.getElementById('date-picker');
+datePicker.value = TODAY;
+
+const SCRIPT_TYPE_LABELS = {
+  pain_point: '😤 痛点型',
+  scene:      '🎬 场景型',
+  contrast:   '🔄 反差型',
+  list:       '📋 列举型',
+};
+
+async function loadContent(page=1) {
+  currentPage = page;
+  const date     = datePicker.value;
+  const platform = document.getElementById('platform-filter').value;
+  const status   = document.getElementById('status-filter').value;
+  const tbody    = document.getElementById('content-tbody');
+  tbody.innerHTML = '<tr><td colspan="8" class="loading">加载中...</td></tr>';
+
+  const d = await apiFetch(`/api/v1/content?date=${date}&platform=${platform}&status=${status}&page=${page}&per_page=20`);
+  if (!d) { tbody.innerHTML = '<tr><td colspan="8" class="loading">加载失败</td></tr>'; return; }
+
+  document.getElementById('content-total').textContent = `共 ${d.total} 条`;
+
+  if (!d.items.length) {
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><div class="icon">✍️</div><div class="msg">暂无内容数据 — 请先运行脚本生成</div></div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = d.items.map(item => {
+    const coverCopy = item.platform === 'douyin' ? (item.cover_copy || '-') : (item.cover_title || '-');
+    return `
+      <tr>
+        <td>
+          <div class="product-info">
+            ${item.cover_img ? `<img class="product-thumb" src="${item.cover_img}" onerror="this.style.display='none'">` : ''}
+            <div>
+              <div class="name" title="${item.product_title}">${(item.product_title||'').slice(0,18)}${item.product_title?.length>18?'…':''}</div>
+              <div class="meta">${item.task_date}</div>
+            </div>
+          </div>
+        </td>
+        <td>${platformTag(item.platform)}</td>
+        <td>${SCRIPT_TYPE_LABELS[item.script_type] || item.script_type}</td>
+        <td style="max-width:160px">
+          <b style="font-size:13px">${coverCopy}</b>
+          ${item.hook_3s ? `<div style="font-size:11px;color:#999;margin-top:2px">${item.hook_3s.slice(0,30)}…</div>` : ''}
+        </td>
+        <td><span style="font-size:12px;background:#E6F4FF;color:#1890FF;padding:3px 8px;border-radius:4px">${item.pub_time_suggest || '待定'}</span></td>
+        <td id="mat-${item.id}"><span style="color:#ccc;font-size:12px">-</span></td>
+        <td>${statusTag(item.status)}</td>
+        <td>
+          <button class="btn btn-default btn-sm" onclick="showScript(${item.id})">📄 详情</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  // 异步加载每条素材状态
+  d.items.forEach(item => loadMaterialStat(item.id));
+
+  // 分页
+  renderPagination(d.total, d.per_page, page);
+}
+
+async function loadMaterialStat(contentId) {
+  const d = await apiFetch(`/api/v1/content/${contentId}/materials`);
+  const cell = document.getElementById(`mat-${contentId}`);
+  if (!cell || !d) return;
+  const s = d.stats;
+  const color = s.failed > 0 ? '#FF4D4F' : (s.pending > 0 ? '#FAAD14' : '#52C41A');
+  cell.innerHTML = `<span style="font-size:11px;color:${color}">✅${s.done} ⏸${s.pending} ❌${s.failed}</span>`;
+}
+
+function renderPagination(total, perPage, page) {
+  const totalPages = Math.ceil(total / perPage);
+  if (totalPages <= 1) { document.getElementById('content-pagination').innerHTML = ''; return; }
+  let html = '';
+  if (page > 1) html += `<button class="btn btn-default btn-sm" onclick="loadContent(${page-1})">上一页</button> `;
+  html += `<span style="font-size:12px;color:#999;padding:0 8px">${page} / ${totalPages}</span>`;
+  if (page < totalPages) html += ` <button class="btn btn-default btn-sm" onclick="loadContent(${page+1})">下一页</button>`;
+  document.getElementById('content-pagination').innerHTML = html;
+}
+
+async function showScript(contentId) {
+  currentScriptId = contentId;
+  const panel = document.getElementById('script-detail-panel');
+  const content = document.getElementById('script-detail-content');
+  panel.style.display = 'block';
+  content.innerHTML = '<div class="loading">加载脚本详情...</div>';
+  panel.scrollIntoView({ behavior: 'smooth' });
+
+  const d = await apiFetch(`/api/v1/content/${contentId}/script`);
+  if (!d || !d.script) { content.innerHTML = '<div class="empty-state"><div class="icon">❌</div><div class="msg">加载失败</div></div>'; return; }
+
+  const s = d.script;
+  const isDouyin = s.platform === 'douyin';
+
+  let html = `
+    <div style="display:flex;gap:16px;align-items:center;margin-bottom:16px;flex-wrap:wrap">
+      <b style="font-size:15px">${s.product_title}</b>
+      ${platformTag(s.platform)}
+      <span style="background:#F5F5F5;padding:3px 10px;border-radius:4px;font-size:12px">${SCRIPT_TYPE_LABELS[s.script_type] || s.script_type}</span>
+      ${statusTag(s.status)}
+      <span style="color:#999;font-size:12px">${s.task_date}</span>
+    </div>
+  `;
+
+  if (isDouyin) {
+    // 抖音脚本
+    html += `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <div class="script-detail">
+          <div class="script-section">
+            <div class="sec-title">📌 封面大字</div>
+            <div class="sec-content" style="font-size:18px;font-weight:700;color:#FF4D4F">${s.cover_copy || '-'}</div>
+          </div>
+          <div class="script-section">
+            <div class="sec-title">⚡ 前3秒钩子</div>
+            <div class="sec-content">${s.hook_3s || '-'}</div>
+          </div>
+          <div class="script-section">
+            <div class="sec-title">🎯 行动号召 (CTA)</div>
+            <div class="sec-content">${s.cta || '-'}</div>
+          </div>
+        </div>
+        <div class="script-detail">
+          <div class="script-section">
+            <div class="sec-title">🛒 商品挂载建议</div>
+            <div class="sec-content">${s.mount_suggest || '-'}</div>
+          </div>
+          <div class="script-section">
+            <div class="sec-title">⏰ 建议发布时间</div>
+            <div class="sec-content" style="color:#1890FF;font-weight:600">${s.pub_time_suggest || '-'}</div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // 分镜脚本
+    const storyboard = s.storyboard_parsed || [];
+    if (storyboard.length) {
+      html += `
+        <div class="script-detail" style="margin-bottom:16px">
+          <div class="sec-title" style="margin-bottom:10px">🎬 分镜脚本（总时长 ≤15s）</div>
+          ${storyboard.map((scene, i) => `
+            <div class="storyboard-item">
+              <div class="time-badge">${scene.time || scene.duration || `镜头${i+1}`}</div>
+              <div>
+                <div style="font-weight:600;margin-bottom:3px">${scene.action || scene.shot || ''}</div>
+                <div style="font-size:12px;color:#666">${scene.narration || scene.caption || scene.text || ''}</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    // 字幕
+    if (s.subtitle) {
+      html += `
+        <div class="script-detail">
+          <div class="sec-title">📝 完整字幕</div>
+          <div class="sec-content" style="white-space:pre-wrap">${s.subtitle}</div>
+        </div>
+      `;
+    }
+  } else {
+    // 小红书笔记
+    const hashtags = s.hashtags_parsed || [];
+    const images   = s.images_spec_parsed || [];
+    html += `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <div class="script-detail">
+          <div class="script-section">
+            <div class="sec-title">📌 封面标题</div>
+            <div class="sec-content" style="font-size:18px;font-weight:700;color:#FF2442">${s.cover_title || '-'}</div>
+          </div>
+          <div class="script-section">
+            <div class="sec-title">📎 封面副标题</div>
+            <div class="sec-content">${s.cover_subtitle || '-'}</div>
+          </div>
+          <div class="script-section">
+            <div class="sec-title">🔗 链接放置方式</div>
+            <div class="sec-content" style="color:#1890FF">${s.link_placement || '-'}</div>
+          </div>
+          <div class="script-section">
+            <div class="sec-title">⏰ 建议发布时间</div>
+            <div class="sec-content" style="color:#1890FF;font-weight:600">${s.pub_time_suggest || '-'}</div>
+          </div>
+        </div>
+        <div class="script-detail">
+          <div class="sec-title" style="margin-bottom:8px">🏷️ 话题标签（${hashtags.length}个）</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            ${hashtags.map(tag => `<span style="background:#FFF1F0;color:#FF2442;padding:2px 8px;border-radius:4px;font-size:12px">${tag}</span>`).join('')}
+          </div>
+        </div>
+      </div>
+    `;
+
+    // 正文
+    if (s.body_text) {
+      html += `
+        <div class="script-detail" style="margin-bottom:16px">
+          <div class="sec-title" style="margin-bottom:8px">📄 笔记正文</div>
+          <div class="sec-content" style="white-space:pre-wrap;line-height:1.9">${s.body_text}</div>
+        </div>
+      `;
+    }
+
+    // 图片规格
+    if (images.length) {
+      html += `
+        <div class="script-detail">
+          <div class="sec-title" style="margin-bottom:10px">🖼️ 图片规格（共${images.length}张）</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px">
+            ${images.map((img, i) => `
+              <div style="border:1px solid #eee;border-radius:8px;padding:10px;background:#FAFAFA">
+                <div style="font-weight:600;margin-bottom:4px;font-size:12px">第 ${i+1} 张</div>
+                <div style="font-size:12px;color:#666">${typeof img === 'string' ? img : (img.desc || img.text || JSON.stringify(img))}</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  content.innerHTML = html;
+}
+
+function closeScriptDetail() {
+  document.getElementById('script-detail-panel').style.display = 'none';
+  currentScriptId = null;
+}
+
+async function approveScript() {
+  if (!currentScriptId) return;
+  await apiPatch(`/api/v1/content/${currentScriptId}/status`, {status: 'approved', reviewer: 'admin'});
+  closeScriptDetail();
+  loadContent(currentPage);
+}
+
+async function rejectScript() {
+  if (!currentScriptId) return;
+  const reason = prompt('拒绝原因（选填）：') || '';
+  await apiPatch(`/api/v1/content/${currentScriptId}/status`, {status: 'rejected', reviewer: 'admin', reason});
+  closeScriptDetail();
+  loadContent(currentPage);
+}
+
+// 发布时间建议
+async function loadSchedule() {
+  const date = datePicker.value;
+  const d = await apiFetch(`/api/v1/publish/schedule?date=${date}`);
+  const grid = document.getElementById('schedule-grid');
+  if (!d) { grid.innerHTML = '<div class="loading">加载失败</div>'; return; }
+
+  function renderPlatform(platform, data, emoji, name, color) {
+    const guide = data.guide || [];
+    const items = data.items || [];
+    return `
+      <div>
+        <div style="font-size:13px;font-weight:600;margin-bottom:10px">${emoji} ${name}</div>
+        <div style="margin-bottom:12px">
+          ${guide.map(g => `
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <span style="background:${color};color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;white-space:nowrap">${g.slot}</span>
+              <span style="font-size:12px;color:#666">${g.desc}</span>
+            </div>
+          `).join('')}
+        </div>
+        ${items.length > 0 ? `
+          <div style="font-size:12px;color:#999;margin-bottom:6px">今日计划发布（${items.length}条）</div>
+          <div class="timeline">
+            ${items.map(item => `
+              <div class="timeline-item">
+                <div class="time">${item.pub_time_suggest || '待定'}</div>
+                <div class="content-text">${(item.product_title||'').slice(0,20)} · ${SCRIPT_TYPE_LABELS[item.script_type]||item.script_type}</div>
+              </div>
+            `).join('')}
+          </div>
+        ` : `<div style="font-size:12px;color:#ccc">今日暂无已审核内容</div>`}
+      </div>
+    `;
+  }
+
+  grid.innerHTML = renderPlatform('douyin', d.douyin, '🎵', '抖音', '#1A1A1A')
+                 + renderPlatform('xiaohongshu', d.xiaohongshu, '📕', '小红书', '#FF2442');
+}
+
+datePicker.addEventListener('change', () => {
+  loadContent();
+  loadSchedule();
+});
+
+// 初始化
+loadContent();
+loadSchedule();
+</script>
+{% endblock %}

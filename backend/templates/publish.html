@@ -1,0 +1,625 @@
+{% extends "base.html" %}
+{% block title %}发布队列 - 带货运营系统{% endblock %}
+
+{% block content %}
+
+<!-- 熔断警告横幅 -->
+<div id="breaker-banner" style="display:none;background:#FFF1F0;border:1px solid #FFCCC7;border-radius:10px;padding:14px 20px;margin-bottom:16px">
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <span style="font-size:18px">🔴</span>
+    <span style="font-weight:600;color:#FF4D4F">发现激活的熔断！</span>
+    <div id="breaker-detail" style="font-size:13px;color:#666;flex:1"></div>
+    <button class="btn btn-default btn-sm" onclick="showResolveModal()">解除熔断</button>
+  </div>
+</div>
+
+<!-- 统计卡 -->
+<div class="stat-row" id="queue-stats-row">
+  <div class="stat-card"><div class="label">今日队列总数</div><div class="value" id="sq-total">-</div></div>
+  <div class="stat-card"><div class="label">待审批</div><div class="value" style="color:#FAAD14" id="sq-pending">-</div></div>
+  <div class="stat-card"><div class="label">已审批</div><div class="value blue" id="sq-approved">-</div></div>
+  <div class="stat-card"><div class="label">已发布</div><div class="value green" id="sq-published">-</div></div>
+  <div class="stat-card"><div class="label">失败/取消</div><div class="value red" id="sq-failed">-</div></div>
+</div>
+
+<!-- 快捷入队 -->
+<div class="card">
+  <div class="card-title">➕ 快捷入队
+    <span class="sub">将已审核脚本加入发布队列</span>
+    <span style="flex:1"></span>
+    <button class="btn btn-default btn-sm" onclick="batchEnqueueApproved()">📥 批量入队（今日approved脚本）</button>
+  </div>
+  <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+    <div>
+      <div style="font-size:12px;color:#999;margin-bottom:4px">脚本ID</div>
+      <input type="number" id="eq-content-id" placeholder="content_task_id" style="padding:7px 12px;border:1px solid #ddd;border-radius:6px;width:140px">
+    </div>
+    <div>
+      <div style="font-size:12px;color:#999;margin-bottom:4px">计划发布时间</div>
+      <input type="datetime-local" id="eq-time" style="padding:7px 12px;border:1px solid #ddd;border-radius:6px">
+    </div>
+    <div>
+      <div style="font-size:12px;color:#999;margin-bottom:4px">优先级</div>
+      <select id="eq-priority" style="padding:7px 12px;border:1px solid #ddd;border-radius:6px">
+        <option value="1">高</option>
+        <option value="2" selected>中</option>
+        <option value="3">低</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" onclick="enqueueOne()">入队 + 自动检查</button>
+    <span id="eq-result" style="font-size:12px;color:#52C41A"></span>
+  </div>
+</div>
+
+<!-- 发布队列 -->
+<div class="card">
+  <div class="card-title">📋 发布队列
+    <span style="flex:1"></span>
+    <div class="filter-bar" style="margin:0">
+      <input type="date" id="date-picker" />
+      <select id="status-filter">
+        <option value="">全部状态</option>
+        <option value="pending_check">待检查</option>
+        <option value="checked">检查通过</option>
+        <option value="pending_approve">待审批</option>
+        <option value="approved">已审批</option>
+        <option value="published">已发布</option>
+        <option value="failed">失败</option>
+        <option value="cancelled">已取消</option>
+        <option value="check_failed">检查未通过</option>
+      </select>
+      <button class="btn btn-default btn-sm" onclick="loadQueue()">刷新</button>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>队列ID</th>
+          <th>商品</th>
+          <th>平台</th>
+          <th>脚本封面</th>
+          <th>计划发布时间</th>
+          <th>检查</th>
+          <th>风险</th>
+          <th>状态</th>
+          <th>审批人</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="queue-tbody">
+        <tr><td colspan="10" class="loading">正在加载队列...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 检查详情展开区 -->
+<div class="card" id="check-detail-panel" style="display:none">
+  <div class="card-title" style="justify-content:space-between">
+    <span>🔍 发布前检查详情</span>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary btn-sm" id="btn-approve-check" onclick="showApproveModal()">✅ 审批通过</button>
+      <button class="btn btn-default btn-sm" onclick="showRejectModal()">❌ 驳回</button>
+      <button class="btn btn-default btn-sm" onclick="closeCheckDetail()">关闭</button>
+    </div>
+  </div>
+  <div id="check-detail-content"><div class="loading">加载中...</div></div>
+</div>
+
+<!-- 数据回传区 -->
+<div class="card">
+  <div class="card-title">📊 数据回传
+    <span class="sub">手动录入发布后的表现数据</span>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+    <!-- 左：录入表单 -->
+    <div>
+      <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:12px;color:#999;margin-bottom:4px">内容ID（content_task_id）</div>
+          <input type="number" id="tr-content-id" placeholder="填写脚本ID" style="padding:7px 12px;border:1px solid #ddd;border-radius:6px;width:180px">
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="btn btn-default btn-sm" onclick="loadPerformance()">查询历史</button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px" id="tracker-form">
+        <!-- 必填 -->
+        <div>
+          <div style="font-size:12px;color:#999;margin-bottom:3px">曝光量 <span style="color:#FF4D4F">*</span></div>
+          <input type="number" id="tr-impressions" placeholder="0" class="tr-input" style="width:100%;padding:6px 10px;border:1px solid #ddd;border-radius:6px">
+        </div>
+        <div>
+          <div style="font-size:12px;color:#999;margin-bottom:3px">成交数 <span style="color:#FF4D4F">*</span></div>
+          <input type="number" id="tr-orders" placeholder="0" class="tr-input" style="width:100%;padding:6px 10px;border:1px solid #ddd;border-radius:6px">
+        </div>
+        <div>
+          <div style="font-size:12px;color:#999;margin-bottom:3px">GMV（元）<span style="color:#FF4D4F">*</span></div>
+          <input type="number" id="tr-gmv" placeholder="0.00" step="0.01" class="tr-input" style="width:100%;padding:6px 10px;border:1px solid #ddd;border-radius:6px">
+        </div>
+        <div>
+          <div style="font-size:12px;color:#999;margin-bottom:3px">佣金（元）<span style="color:#FF4D4F">*</span></div>
+          <input type="number" id="tr-commission" placeholder="0.00" step="0.01" class="tr-input" style="width:100%;padding:6px 10px;border:1px solid #ddd;border-radius:6px">
+        </div>
+        <!-- 可选 -->
+        <div>
+          <div style="font-size:12px;color:#999;margin-bottom:3px">完播率（0-1）</div>
+          <input type="number" id="tr-completion-rate" placeholder="0.00" step="0.01" max="1" class="tr-input" style="width:100%;padding:6px 10px;border:1px solid #ddd;border-radius:6px">
+        </div>
+        <div>
+          <div style="font-size:12px;color:#999;margin-bottom:3px">商品点击数</div>
+          <input type="number" id="tr-product-clicks" placeholder="0" class="tr-input" style="width:100%;padding:6px 10px;border:1px solid #ddd;border-radius:6px">
+        </div>
+        <div>
+          <div style="font-size:12px;color:#999;margin-bottom:3px">点赞数</div>
+          <input type="number" id="tr-likes" placeholder="0" class="tr-input" style="width:100%;padding:6px 10px;border:1px solid #ddd;border-radius:6px">
+        </div>
+        <div>
+          <div style="font-size:12px;color:#999;margin-bottom:3px">评论数</div>
+          <input type="number" id="tr-comments" placeholder="0" class="tr-input" style="width:100%;padding:6px 10px;border:1px solid #ddd;border-radius:6px">
+        </div>
+        <div style="grid-column:span 2">
+          <div style="font-size:12px;color:#999;margin-bottom:3px">发布异常（如有）</div>
+          <input type="text" id="tr-exception" placeholder="正常填写 - ，有异常则描述" style="width:100%;padding:6px 10px;border:1px solid #ddd;border-radius:6px">
+        </div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+        <button class="btn btn-primary" onclick="submitTracker()">📤 提交回传</button>
+        <span id="tr-result" style="font-size:12px"></span>
+      </div>
+    </div>
+
+    <!-- 右：今日汇总 -->
+    <div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:10px">📈 今日表现汇总</div>
+      <div id="daily-perf"><div class="loading">加载中...</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- 审批 Modal -->
+<div id="approve-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:1000;display:none;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;padding:24px;width:400px;max-width:90vw">
+    <div style="font-size:15px;font-weight:600;margin-bottom:16px">✅ 审批通过确认</div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:12px;color:#999;margin-bottom:4px">审批人 MIS（必填）</div>
+      <input type="text" id="modal-approver" placeholder="填写您的 MIS 账号" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px">
+    </div>
+    <div id="modal-risk-warn" style="display:none;background:#FFF7E6;border:1px solid #FFD591;border-radius:6px;padding:10px;margin-bottom:12px;font-size:12px;color:#D46B08">
+      ⚠️ 高风险内容，需在下方说明确认理由
+    </div>
+    <div>
+      <div style="font-size:12px;color:#999;margin-bottom:4px">审批备注（高风险必填）</div>
+      <textarea id="modal-note" rows="3" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;font-size:13px;resize:none" placeholder="可选：说明审批依据..."></textarea>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn btn-default" onclick="closeApproveModal()">取消</button>
+      <button class="btn btn-primary" onclick="submitApprove()">确认审批通过</button>
+    </div>
+  </div>
+</div>
+
+<!-- 驳回 Modal -->
+<div id="reject-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:1000;display:none;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw">
+    <div style="font-size:15px;font-weight:600;margin-bottom:16px">❌ 驳回确认</div>
+    <div>
+      <div style="font-size:12px;color:#999;margin-bottom:4px">驳回原因（必填）</div>
+      <textarea id="reject-reason" rows="3" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;font-size:13px;resize:none" placeholder="请填写驳回原因..."></textarea>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn btn-default" onclick="closeRejectModal()">取消</button>
+      <button class="btn btn-primary" style="background:#FF4D4F;border-color:#FF4D4F" onclick="submitReject()">确认驳回</button>
+    </div>
+  </div>
+</div>
+
+<!-- 解除熔断 Modal -->
+<div id="resolve-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:1000;display:none;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;padding:24px;width:420px;max-width:90vw">
+    <div style="font-size:15px;font-weight:600;margin-bottom:16px">🔓 解除熔断</div>
+    <div id="active-breakers-list" style="margin-bottom:12px;max-height:200px;overflow-y:auto"></div>
+    <div>
+      <div style="font-size:12px;color:#999;margin-bottom:4px">解除人</div>
+      <input type="text" id="resolve-by" placeholder="您的 MIS 账号" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;margin-bottom:10px">
+      <div style="font-size:12px;color:#999;margin-bottom:4px">解除原因（必填）</div>
+      <textarea id="resolve-note" rows="2" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;font-size:13px;resize:none" placeholder="说明已处理的根本原因..."></textarea>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn btn-default" onclick="closeResolveModal()">取消</button>
+      <button class="btn btn-primary" onclick="submitResolve()">确认解除</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentQueueId = null;
+let currentRiskLevel = null;
+let selectedBreakerId = null;
+
+const datePicker = document.getElementById('date-picker');
+datePicker.value = TODAY;
+
+const QUEUE_STATUS_LABELS = {
+  pending_check:   '<span class="tag tag-pending">⏸ 待检查</span>',
+  checked:         '<span class="tag" style="background:#E6F4FF;color:#1890FF">✅ 已检查</span>',
+  pending_approve: '<span class="tag" style="background:#FFF7E6;color:#FAAD14">👤 待审批</span>',
+  approved:        '<span class="tag tag-approved">✅ 已审批</span>',
+  publishing:      '<span class="tag" style="background:#F6FFED;color:#52C41A">🚀 发布中</span>',
+  published:       '<span class="tag tag-published">🚀 已发布</span>',
+  failed:          '<span class="tag tag-rejected">❌ 失败</span>',
+  cancelled:       '<span class="tag tag-pending">🚫 已取消</span>',
+  check_failed:    '<span class="tag tag-rejected">❌ 检查未通过</span>',
+};
+
+const RISK_LABELS = {
+  none:   '<span style="color:#999;font-size:12px">-</span>',
+  low:    '<span style="background:#F6FFED;color:#52C41A;padding:2px 6px;border-radius:4px;font-size:11px">🟢 低</span>',
+  medium: '<span style="background:#FFF7E6;color:#FAAD14;padding:2px 6px;border-radius:4px;font-size:11px">🟡 中</span>',
+  high:   '<span style="background:#FFF1F0;color:#FF4D4F;padding:2px 6px;border-radius:4px;font-size:11px">🔴 高</span>',
+};
+
+const CHECK_ICONS = { pass: '✅', warning: '⚠️', fail: '❌' };
+
+async function loadBreakerBanner() {
+  const d = await apiFetch('/api/v1/breaker/active');
+  const banner = document.getElementById('breaker-banner');
+  if (!d || !d.items.length) { banner.style.display = 'none'; return; }
+  banner.style.display = 'flex';
+  const items = d.items;
+  document.getElementById('breaker-detail').innerHTML = items.map(b =>
+    `[${b.level}] ${b.trigger_reason} <span style="font-size:11px;color:#ccc">${b.created_at||''}</span>`
+  ).join(' &nbsp;|&nbsp; ');
+}
+
+async function loadQueueStats() {
+  const d = await apiFetch(`/api/v1/publish/stats?date=${datePicker.value}`);
+  if (!d) return;
+  const s = d.stats;
+  document.getElementById('sq-total').textContent     = s.total || 0;
+  const pending = (s.checked||0) + (s.pending_approve||0);
+  document.getElementById('sq-pending').textContent   = pending;
+  document.getElementById('sq-approved').textContent  = s.approved || 0;
+  document.getElementById('sq-published').textContent = s.published || 0;
+  document.getElementById('sq-failed').textContent    = (s.failed||0) + (s.cancelled||0);
+}
+
+async function loadQueue() {
+  const date   = datePicker.value;
+  const status = document.getElementById('status-filter').value;
+  const tbody  = document.getElementById('queue-tbody');
+  tbody.innerHTML = '<tr><td colspan="10" class="loading">加载中...</td></tr>';
+
+  const d = await apiFetch(`/api/v1/publish/queue?date=${date}&status=${status}`);
+  if (!d || !d.items.length) {
+    tbody.innerHTML = `<tr><td colspan="10"><div class="empty-state"><div class="icon">📭</div><div class="msg">暂无队列数据 — 点击「批量入队」将今日approved脚本加入队列</div></div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = d.items.map(q => {
+    const checkIcon = q.check_passed === 1 ? '✅' : q.check_passed === 2 ? '⚠️' : q.check_passed === 3 ? '❌' : '⏸';
+    const canApprove = ['checked','pending_approve'].includes(q.status);
+    return `
+      <tr>
+        <td style="font-weight:700;color:#999">#${q.id}</td>
+        <td>
+          <div class="product-info">
+            ${q.cover_img ? `<img class="product-thumb" src="${q.cover_img}" onerror="this.style.display='none'">` : ''}
+            <div>
+              <div style="font-size:12px;max-width:120px">${(q.product_title||'').slice(0,16)}…</div>
+              <div style="font-size:11px;color:#999">¥${q.commission_amt||'-'} 佣金</div>
+            </div>
+          </div>
+        </td>
+        <td>${platformTag(q.platform)}</td>
+        <td style="max-width:140px;font-size:12px"><b>${(q.cover_copy||'-').slice(0,20)}</b></td>
+        <td><span style="background:#E6F4FF;color:#1890FF;padding:2px 8px;border-radius:4px;font-size:11px">${q.scheduled_time||'-'}</span></td>
+        <td>
+          <button style="background:none;border:none;cursor:pointer;font-size:16px" title="查看检查详情" onclick="showCheckDetail(${q.id})">${checkIcon}</button>
+        </td>
+        <td>${RISK_LABELS[q.risk_level||'none']}</td>
+        <td>${QUEUE_STATUS_LABELS[q.status] || q.status}</td>
+        <td style="font-size:12px;color:#666">${q.approved_by||'-'}</td>
+        <td>
+          ${canApprove ? `<button class="btn btn-primary btn-sm" onclick="currentQueueId=${q.id};currentRiskLevel='${q.risk_level}';showApproveModal()">审批</button> ` : ''}
+          ${canApprove ? `<button class="btn btn-default btn-sm" onclick="currentQueueId=${q.id};showRejectModal()">驳回</button>` : ''}
+          ${q.status==='check_failed' ? `<button class="btn btn-default btn-sm" onclick="recheckQueue(${q.id})">重检</button>` : ''}
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function showCheckDetail(queueId) {
+  currentQueueId = queueId;
+  const panel   = document.getElementById('check-detail-panel');
+  const content = document.getElementById('check-detail-content');
+  panel.style.display = 'block';
+  content.innerHTML   = '<div class="loading">加载检查详情...</div>';
+  panel.scrollIntoView({ behavior: 'smooth' });
+
+  // 获取队列详情（含 check_result）
+  const d = await apiFetch(`/api/v1/publish/queue?date=${datePicker.value}`);
+  const q = d?.items?.find(i => i.id === queueId);
+  if (!q) { content.innerHTML = '<div class="empty-state"><div class="icon">❌</div><div class="msg">加载失败</div></div>'; return; }
+
+  currentRiskLevel = q.risk_level;
+
+  const checks   = Array.isArray(q.check_result) ? q.check_result : [];
+  const riskFlags = Array.isArray(q.risk_flags)  ? q.risk_flags  : [];
+
+  content.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+      <!-- 检查清单 -->
+      <div>
+        <div style="font-size:13px;font-weight:600;margin-bottom:10px">📋 发布前检查清单</div>
+        ${checks.length ? checks.map(c => `
+          <div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #f5f5f5">
+            <span style="flex-shrink:0;font-size:16px">${CHECK_ICONS[c.status]||'❓'}</span>
+            <div>
+              <div style="font-size:13px;font-weight:500">${c.name}</div>
+              <div style="font-size:12px;color:#666;margin-top:2px">${c.message}</div>
+              ${c.detail ? `<div style="font-size:11px;color:#999;margin-top:2px">${JSON.stringify(c.detail)}</div>` : ''}
+            </div>
+          </div>
+        `).join('') : '<div style="color:#ccc;font-size:12px">未执行检查</div>'}
+      </div>
+
+      <!-- 风险识别 -->
+      <div>
+        <div style="font-size:13px;font-weight:600;margin-bottom:10px">
+          ⚠️ 风险识别
+          ${RISK_LABELS[q.risk_level||'none']}
+        </div>
+        ${riskFlags.length ? riskFlags.map(f => {
+          const level = f.startsWith('[HIGH]') ? '#FFF1F0' : f.startsWith('[MEDIUM]') ? '#FFF7E6' : '#F6FFED';
+          const color = f.startsWith('[HIGH]') ? '#FF4D4F' : f.startsWith('[MEDIUM]') ? '#FAAD14' : '#52C41A';
+          return `<div style="background:${level};border-left:3px solid ${color};padding:8px 12px;margin-bottom:6px;border-radius:0 6px 6px 0;font-size:12px">${f}</div>`;
+        }).join('') : '<div style="color:#52C41A;font-size:13px">✅ 未识别到风险动作</div>'}
+
+        ${q.risk_level === 'high' ? `
+          <div style="margin-top:12px;background:#FFF1F0;border:1px solid #FFCCC7;border-radius:6px;padding:10px;font-size:12px;color:#FF4D4F">
+            🚨 高风险内容：审批时必须在备注中填写风险确认说明
+          </div>
+        ` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function closeCheckDetail() {
+  document.getElementById('check-detail-panel').style.display = 'none';
+  currentQueueId = null;
+}
+
+async function recheckQueue(queueId) {
+  const r = await fetch('/api/v1/publish/recheck', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({queue_id: queueId}),
+  });
+  const d = await r.json();
+  loadQueue();
+  if (queueId === currentQueueId) showCheckDetail(queueId);
+}
+
+// ── 入队 ─────────────────────────────────────────────────────
+
+async function enqueueOne() {
+  const cid  = document.getElementById('eq-content-id').value;
+  const time = document.getElementById('eq-time').value;
+  const pri  = document.getElementById('eq-priority').value;
+  const res  = document.getElementById('eq-result');
+
+  if (!cid || !time) { res.textContent = '❌ 请填写脚本ID和发布时间'; res.style.color='#FF4D4F'; return; }
+
+  const scheduled = time.replace('T', ' ').slice(0, 16);
+  const r = await fetch('/api/v1/publish/enqueue', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({content_task_id: +cid, scheduled_time: scheduled, priority: +pri, operator: 'admin'}),
+  });
+  const d = await r.json();
+  if (d.success) {
+    res.textContent = `✅ 已入队（#${d.queue_id}）检查：${d.check_result?.overall || '-'}`;
+    res.style.color = '#52C41A';
+    loadQueue(); loadQueueStats();
+  } else {
+    res.textContent = `❌ ${d.error}`;
+    res.style.color = '#FF4D4F';
+  }
+}
+
+async function batchEnqueueApproved() {
+  // 获取今日所有 approved 脚本
+  const d = await apiFetch(`/api/v1/content?date=${datePicker.value}&status=approved&per_page=50`);
+  if (!d || !d.items.length) { alert('今日无 approved 状态的脚本'); return; }
+  const ids = d.items.map(i => i.id);
+  if (!confirm(`即将将 ${ids.length} 条 approved 脚本批量入队，是否继续？`)) return;
+
+  const r = await fetch('/api/v1/publish/enqueue-batch', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({content_ids: ids, base_date: datePicker.value}),
+  });
+  const result = await r.json();
+  alert(`批量入队完成：成功 ${result.success} 条，失败 ${result.failed} 条`);
+  loadQueue(); loadQueueStats();
+}
+
+// ── 审批 Modal ────────────────────────────────────────────────
+
+function showApproveModal() {
+  const modal = document.getElementById('approve-modal');
+  modal.style.display = 'flex';
+  const riskWarn = document.getElementById('modal-risk-warn');
+  riskWarn.style.display = currentRiskLevel === 'high' ? 'block' : 'none';
+}
+function closeApproveModal() { document.getElementById('approve-modal').style.display='none'; }
+
+async function submitApprove() {
+  const approver = document.getElementById('modal-approver').value.trim();
+  const note     = document.getElementById('modal-note').value.trim();
+  if (!approver) { alert('必须填写审批人'); return; }
+  if (currentRiskLevel === 'high' && !note) { alert('高风险内容必须填写审批备注'); return; }
+
+  const r = await fetch('/api/v1/publish/approve', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({queue_id: currentQueueId, approver, note}),
+  });
+  const d = await r.json();
+  closeApproveModal();
+  closeCheckDetail();
+  if (d.success) { alert(`✅ ${d.message}`); }
+  else { alert(`❌ ${d.error}`); }
+  loadQueue(); loadQueueStats();
+}
+
+function showRejectModal() { document.getElementById('reject-modal').style.display='flex'; }
+function closeRejectModal() { document.getElementById('reject-modal').style.display='none'; }
+
+async function submitReject() {
+  const reason = document.getElementById('reject-reason').value.trim();
+  if (!reason) { alert('必须填写驳回原因'); return; }
+
+  const r = await fetch('/api/v1/publish/reject', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({queue_id: currentQueueId, approver: 'admin', reason}),
+  });
+  const d = await r.json();
+  closeRejectModal();
+  closeCheckDetail();
+  loadQueue(); loadQueueStats();
+}
+
+// ── 熔断解除 Modal ────────────────────────────────────────────
+
+async function showResolveModal() {
+  const modal = document.getElementById('resolve-modal');
+  modal.style.display = 'flex';
+  const d = await apiFetch('/api/v1/breaker/active');
+  const el = document.getElementById('active-breakers-list');
+  el.innerHTML = d?.items?.map(b => `
+    <div style="display:flex;gap:8px;align-items:center;padding:8px;border:1px solid #FFCCC7;border-radius:6px;margin-bottom:6px;cursor:pointer;${selectedBreakerId===b.id?'background:#FFF1F0':''}"
+         onclick="selectedBreakerId=${b.id};this.parentElement.querySelectorAll('div').forEach(e=>e.style.background='');this.style.background='#FFF1F0'">
+      <span style="font-weight:700;color:#FF4D4F">[${b.level}]</span>
+      <span style="font-size:12px;flex:1">${b.trigger_reason}</span>
+      <span style="font-size:11px;color:#999">#${b.id}</span>
+    </div>
+  `).join('') || '<div style="color:#ccc;font-size:12px">无激活熔断</div>';
+}
+function closeResolveModal() { document.getElementById('resolve-modal').style.display='none'; }
+
+async function submitResolve() {
+  if (!selectedBreakerId) { alert('请选择要解除的熔断记录'); return; }
+  const resolver = document.getElementById('resolve-by').value.trim();
+  const note     = document.getElementById('resolve-note').value.trim();
+  if (!resolver) { alert('必须填写解除人'); return; }
+  if (!note)     { alert('必须填写解除原因'); return; }
+
+  const r = await fetch('/api/v1/breaker/resolve', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({cb_id: selectedBreakerId, resolver, note}),
+  });
+  const d = await r.json();
+  closeResolveModal();
+  if (d.success) { alert(`✅ ${d.message}`); }
+  else { alert(`❌ ${d.error}`); }
+  loadBreakerBanner();
+}
+
+// ── 数据回传 ──────────────────────────────────────────────────
+
+async function loadDailyPerf() {
+  const d = await apiFetch(`/api/v1/tracker/daily?date=${datePicker.value}`);
+  const el = document.getElementById('daily-perf');
+  const s  = d?.summary || {};
+  if (!s.pub_count) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">📊</div><div class="msg">今日暂无回传数据</div></div>';
+    return;
+  }
+  const items = [
+    ['发布数',   s.pub_count],
+    ['总曝光',   (s.total_impressions||0).toLocaleString()],
+    ['平均完播率', ((s.avg_completion_rate||0)*100).toFixed(1)+'%'],
+    ['平均点赞率', ((s.avg_like_rate||0)*100).toFixed(2)+'%'],
+    ['平均商品CTR', ((s.avg_product_ctr||0)*100).toFixed(2)+'%'],
+    ['成交总数',   s.total_orders||0],
+    ['总GMV',     '¥'+(s.total_gmv||0).toFixed(0)],
+    ['总佣金',    '¥'+(s.total_commission||0).toFixed(0)],
+  ];
+  el.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+    ${items.map(([label, val]) => `
+      <div style="background:#FAFAFA;border-radius:6px;padding:8px 12px">
+        <div style="font-size:11px;color:#999">${label}</div>
+        <div style="font-size:16px;font-weight:700">${val}</div>
+      </div>
+    `).join('')}
+  </div>`;
+}
+
+async function loadPerformance() {
+  const cid = document.getElementById('tr-content-id').value;
+  if (!cid) return;
+  const d = await apiFetch(`/api/v1/tracker/content/${cid}`);
+  if (!d || !d.records.length) { alert('该内容暂无历史回传记录'); return; }
+  const latest = d.records[0];
+  // 回填表单
+  document.getElementById('tr-impressions').value       = latest.impressions || '';
+  document.getElementById('tr-orders').value             = latest.orders || '';
+  document.getElementById('tr-gmv').value                = latest.gmv || '';
+  document.getElementById('tr-commission').value         = latest.commission || '';
+  document.getElementById('tr-completion-rate').value    = latest.completion_rate || '';
+  document.getElementById('tr-product-clicks').value     = latest.product_clicks || '';
+  document.getElementById('tr-likes').value              = latest.likes || '';
+  document.getElementById('tr-comments').value           = latest.comments || '';
+}
+
+async function submitTracker() {
+  const cid = document.getElementById('tr-content-id').value;
+  const res  = document.getElementById('tr-result');
+  if (!cid) { res.textContent='❌ 请填写内容ID'; res.style.color='#FF4D4F'; return; }
+
+  const data = {
+    content_task_id:  +cid,
+    impressions:      +document.getElementById('tr-impressions').value || 0,
+    orders:           +document.getElementById('tr-orders').value || 0,
+    gmv:              +document.getElementById('tr-gmv').value || 0,
+    commission:       +document.getElementById('tr-commission').value || 0,
+    completion_rate:  +document.getElementById('tr-completion-rate').value || null,
+    product_clicks:   +document.getElementById('tr-product-clicks').value || null,
+    likes:            +document.getElementById('tr-likes').value || null,
+    comments:         +document.getElementById('tr-comments').value || null,
+    pub_exception:    document.getElementById('tr-exception').value || '',
+  };
+
+  // 验证必填
+  if (!data.impressions) { res.textContent='❌ 曝光量为必填'; res.style.color='#FF4D4F'; return; }
+
+  const r = await fetch('/api/v1/tracker/record', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data),
+  });
+  const d = await r.json();
+  if (d.success) {
+    res.textContent = `✅ 已录入 · 佣金¥${data.commission} · 完播率${((data.completion_rate||0)*100).toFixed(0)}%`;
+    res.style.color = '#52C41A';
+    loadDailyPerf();
+  } else {
+    res.textContent = `❌ ${d.errors?.join(' | ') || d.error}`;
+    res.style.color = '#FF4D4F';
+  }
+}
+
+datePicker.addEventListener('change', () => {
+  loadQueue(); loadQueueStats(); loadDailyPerf();
+});
+
+// 初始化
+loadBreakerBanner();
+loadQueueStats();
+loadQueue();
+loadDailyPerf();
+</script>
+{% endblock %}

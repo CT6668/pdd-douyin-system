@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% block title %}复盘看板 - 带货运营系统{% endblock %}
+
+{% block content %}
+<!-- 日期选择 -->
+<div class="card" style="padding:14px 20px;margin-bottom:16px">
+  <div class="filter-bar">
+    <span style="font-size:14px;font-weight:600">📅 复盘日期</span>
+    <input type="date" id="date-picker" />
+    <button class="btn btn-primary btn-sm" onclick="loadAll()">刷新</button>
+    <button class="btn btn-default btn-sm" onclick="saveReview()">💾 保存复盘</button>
+    <span style="color:#999;font-size:12px" id="save-tip"></span>
+  </div>
+</div>
+
+<!-- 摘要数字卡 -->
+<div class="stat-row" id="summary-row">
+  <div class="stat-card"><div class="label">分析商品</div><div class="value" id="s-analyzed">-</div></div>
+  <div class="stat-card"><div class="label">入选商品</div><div class="value blue" id="s-selected">-</div></div>
+  <div class="stat-card"><div class="label">生成脚本</div><div class="value" id="s-scripts">-</div></div>
+  <div class="stat-card"><div class="label">发布内容</div><div class="value green" id="s-published">-</div></div>
+  <div class="stat-card"><div class="label">今日佣金</div><div class="value red" id="s-commission">¥-</div></div>
+</div>
+
+<div class="review-grid">
+
+  <!-- 左列 -->
+  <div>
+    <!-- 今日最佳商品 -->
+    <div class="card">
+      <div class="card-title">🏆 今日最佳商品</div>
+      <div id="best-product"><div class="loading">加载中...</div></div>
+    </div>
+
+    <!-- 今日低效商品 -->
+    <div class="card">
+      <div class="card-title">📉 今日低效商品</div>
+      <div id="worst-products"><div class="loading">加载中...</div></div>
+    </div>
+  </div>
+
+  <!-- 右列 -->
+  <div>
+    <!-- 有效脚本类型 -->
+    <div class="card">
+      <div class="card-title">✅ 今日脚本类型表现</div>
+      <div id="script-type-stats"><div class="loading">加载中...</div></div>
+    </div>
+
+    <!-- 明日调整建议 -->
+    <div class="card">
+      <div class="card-title">💡 明日调整建议</div>
+      <ul class="suggest-list" id="tomorrow-suggests"><li class="loading">加载中...</li></ul>
+      <div style="margin-top:12px">
+        <div style="font-size:12px;color:#999;margin-bottom:6px">人工补充建议（可选）</div>
+        <textarea id="manual-suggest" rows="3" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;font-size:13px;resize:none" placeholder="在此输入明日重点关注事项..."></textarea>
+      </div>
+    </div>
+
+    <!-- 洞察记录 -->
+    <div class="card">
+      <div class="card-title">📝 今日洞察</div>
+      <textarea id="insights-input" rows="4" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;font-size:13px;resize:none" placeholder="记录今日的运营洞察、异常情况、经验总结..."></textarea>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const datePicker = document.getElementById('date-picker');
+datePicker.value = TODAY;
+
+const SCRIPT_TYPE_LABELS = {
+  pain_point: '😤 痛点型',
+  scene:      '🎬 场景型',
+  contrast:   '🔄 反差型',
+  list:       '📋 列举型',
+};
+
+async function loadSummary(date) {
+  const d = await apiFetch(`/api/v1/review/summary?date=${date}`);
+  if (!d || !d.summary) return;
+  const s = d.summary;
+  document.getElementById('s-analyzed').textContent   = s.products_analyzed || 0;
+  document.getElementById('s-selected').textContent   = s.products_selected || 0;
+  document.getElementById('s-scripts').textContent    = s.scripts_generated || 0;
+  document.getElementById('s-published').textContent  = s.videos_published  || 0;
+  document.getElementById('s-commission').textContent = '¥' + (s.total_commission || 0).toFixed(0);
+
+  if (s.insights) document.getElementById('insights-input').value = s.insights;
+}
+
+async function loadBestProduct(date) {
+  const d = await apiFetch(`/api/v1/review/best-product?date=${date}`);
+  const el = document.getElementById('best-product');
+  if (!d || !d.best_product) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">🏆</div><div class="msg">暂无数据 — 发布并录入表现数据后自动计算</div></div>';
+    return;
+  }
+  const p = d.best_product;
+  el.innerHTML = `
+    <div class="product-info" style="margin-bottom:12px">
+      ${p.cover_img ? `<img class="product-thumb" src="${p.cover_img}" onerror="this.style.display='none'" style="width:60px;height:60px">` : ''}
+      <div>
+        <div style="font-size:14px;font-weight:600">${p.title}</div>
+        <div style="font-size:12px;color:#999;margin-top:2px">${p.category_l1 || ''}</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      <div style="text-align:center">
+        <div style="font-size:22px;font-weight:700;color:#52C41A">¥${(p.total_commission||0).toFixed(0)}</div>
+        <div style="font-size:11px;color:#999">今日佣金</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:22px;font-weight:700;color:#1890FF">${((p.avg_ctr||0)*100).toFixed(1)}%</div>
+        <div style="font-size:11px;color:#999">平均CTR</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:22px;font-weight:700;color:#FF4D4F">${p.total_orders||0}</div>
+        <div style="font-size:11px;color:#999">成单数</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:22px;font-weight:700">${p.total_score?.toFixed(0)||'-'}</div>
+        <div style="font-size:11px;color:#999">评分</div>
+      </div>
+    </div>
+    ${p.pdd_url ? `<a href="${p.pdd_url}" target="_blank" class="btn btn-default btn-sm" style="margin-top:12px">🔗 查看商品</a>` : ''}
+  `;
+}
+
+async function loadWorstProducts(date) {
+  const d = await apiFetch(`/api/v1/review/worst-products?date=${date}`);
+  const el = document.getElementById('worst-products');
+  if (!d || !d.worst_products.length) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">📊</div><div class="msg">暂无低效商品数据</div></div>';
+    return;
+  }
+  el.innerHTML = d.worst_products.map(p => `
+    <div style="border:1px solid #FFF1F0;border-radius:8px;padding:12px;margin-bottom:10px;background:#FFFAFA">
+      <div class="product-info" style="margin-bottom:8px">
+        ${p.cover_img ? `<img class="product-thumb" src="${p.cover_img}" onerror="this.style.display='none'">` : ''}
+        <div>
+          <div style="font-size:13px;font-weight:600">${(p.title||'').slice(0,24)}</div>
+          <div style="font-size:11px;color:#999">佣金¥${p.commission_amt||'-'} · CTR ${((p.avg_ctr||0)*100).toFixed(1)}% · GMV¥${p.total_gmv||0}</div>
+        </div>
+      </div>
+      <div>
+        ${(p.reason_analysis||[]).map(r => `
+          <div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px">
+            <span style="color:#FF4D4F;flex-shrink:0">⚠️</span>
+            <span style="font-size:12px;color:#666">${r}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+async function loadScriptTypeStats(date) {
+  const d = await apiFetch(`/api/v1/review/script-type-stats?date=${date}`);
+  const el = document.getElementById('script-type-stats');
+  if (!d || !d.script_types.length) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">📊</div><div class="msg">暂无脚本表现数据</div></div>';
+    return;
+  }
+  const maxGmv = Math.max(...d.script_types.map(t => t.total_gmv || 0), 1);
+  el.innerHTML = d.script_types.map(t => `
+    <div style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:13px;font-weight:600">${SCRIPT_TYPE_LABELS[t.script_type]||t.script_type}</span>
+          ${t.is_best ? '<span style="background:#FFF7E6;color:#FAAD14;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">🔥 最优</span>' : ''}
+        </div>
+        <div style="font-size:12px;color:#999">
+          ${t.total}条 · 已发${t.published} · GMV¥${t.total_gmv||0} · CTR${((t.avg_ctr||0)*100).toFixed(1)}%
+        </div>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" style="width:${maxGmv>0?(t.total_gmv/maxGmv*100).toFixed(1):0}%;background:${t.is_best?'#52C41A':'#1890FF'}"></div>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function loadTomorrowSuggests(date) {
+  const d = await apiFetch(`/api/v1/review/tomorrow-suggest?date=${date}`);
+  const el = document.getElementById('tomorrow-suggests');
+  if (!d || !d.suggests.length) {
+    el.innerHTML = '<li style="color:#ccc;font-size:12px">暂无建议数据</li>';
+    return;
+  }
+  el.innerHTML = d.suggests.map(s => `<li>${s}</li>`).join('');
+}
+
+async function loadAll() {
+  const date = datePicker.value;
+  loadSummary(date);
+  loadBestProduct(date);
+  loadWorstProducts(date);
+  loadScriptTypeStats(date);
+  loadTomorrowSuggests(date);
+}
+
+async function saveReview() {
+  const date = datePicker.value;
+  const insights = document.getElementById('insights-input').value;
+  const manualSuggest = document.getElementById('manual-suggest').value;
+
+  const d = await apiFetch(`/api/v1/review/summary?date=${date}`);
+  const suggests = (d?.summary?.tomorrow_suggest ? JSON.parse(d.summary.tomorrow_suggest || '[]') : []);
+  if (manualSuggest.trim()) suggests.push('👤 ' + manualSuggest.trim());
+
+  const res = await fetch('/api/v1/review/save', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ review_date: date, insights, tomorrow_suggest: suggests }),
+  });
+  const r = await res.json();
+  const tip = document.getElementById('save-tip');
+  if (r.success) {
+    tip.textContent = `✅ ${r.action === 'created' ? '已新建' : '已更新'} · ${new Date().toLocaleTimeString()}`;
+    tip.style.color = '#52C41A';
+  } else {
+    tip.textContent = '❌ 保存失败';
+    tip.style.color = '#FF4D4F';
+  }
+  setTimeout(() => tip.textContent = '', 4000);
+}
+
+datePicker.addEventListener('change', loadAll);
+loadAll();
+</script>
+{% endblock %}
