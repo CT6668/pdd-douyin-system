@@ -232,7 +232,7 @@ def _generate_auto_suggests(date):
     hot_cats = query("""
         SELECT category_l1, category_l2, heat_score, trend_7d
         FROM category_radar
-        WHERE date = ? AND trend_7d = 'rising'
+        WHERE date = ? AND trend_7d > 0
         ORDER BY heat_score DESC LIMIT 3
     """, (date,))
     if hot_cats:

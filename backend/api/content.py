@@ -105,7 +105,7 @@ def content_materials(content_id):
     """素材渲染任务状态"""
     tasks = query("""
         SELECT id, platform, material_type, seq_index, filename, filepath,
-               status, script_version, overlay_text, img_purpose,
+               status, script_version, source_key_point,
                created_at, updated_at
         FROM material_render_tasks
         WHERE content_task_id = ?

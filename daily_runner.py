@@ -63,25 +63,96 @@ def task_category_radar(run_date: str, config: dict) -> bool:
 
 def task_product_pool_refresh(run_date: str, config: dict) -> bool:
     """
-    任务2：候选商品池刷新
-    输入：类目关键词列表
-    输出：product_pool 表新增候选商品
-    当前阶段：手动录入模式（人工从拼多多复制商品信息）
+    任务2：候选商品池刷新（B阶段：接入PDD多多进宝真实API）
+    输入：config.focus.categories 中的关键词列表
+    输出：product_pool 表新增/更新候选商品 + 自动预打分
+    降级：API 失败时记录警告，返回 False 但不 raise（允许后续任务继续）
     """
+    import time as _time
     log_task_start(logger, "候选商品池刷新", {"date": run_date})
     try:
+        from scripts.product_fetcher import ProductFetcher
+
+        db_path = str(ROOT / config.get("paths", {}).get("db", "data/db/main.db"))
+        fetcher = ProductFetcher(db_path, config)
+
+        # ── 关键词列表 ──────────────────────────
         keywords = []
+        price_ranges = []
         for cat in config.get("focus", {}).get("categories", []):
             keywords.extend(cat.get("keywords", []))
-        logger.info(f"[商品池] 关注关键词（{len(keywords)}个）：{keywords[:5]}...")
-        logger.info(f"[商品池] 当前模式: manual | 请手动将候选商品录入 product_pool 表")
-        logger.info(f"[商品池] 字段说明：pdd_goods_id, title, price, commission_rate, pdd_url 为必填")
-        log_task_end(logger, "候选商品池刷新", True, "手动模式，已提示人工录入")
+            pr = cat.get("price_range", {})
+            price_ranges.append((
+                float(pr.get("min", 9.9)),
+                float(pr.get("max", 99.0)),
+            ))
+
+        # 全局价格区间：取最宽范围
+        price_min = min(p[0] for p in price_ranges) if price_ranges else 9.9
+        price_max = max(p[1] for p in price_ranges) if price_ranges else 99.0
+
+        logger.info(
+            f"[商品池] 关注关键词 {len(keywords)} 个，价格区间 ¥{price_min}~¥{price_max}"
+        )
+
+        # ── 关键词搜索（限前5个，避免 API 超配额）──
+        all_goods = []
+        fetch_keywords = keywords[:5]
+        for kw in fetch_keywords:
+            goods = fetcher.fetch_by_keyword(kw, pages=1, sort_type=3)
+            all_goods.extend(goods)
+            logger.info(f"  关键词「{kw}」→ {len(goods)} 条")
+            _time.sleep(1)  # 关键词间限流
+
+        # ── 高佣榜补充 ──────────────────────────
+        recommend = fetcher.fetch_recommend(channel_type=10)
+        all_goods.extend(recommend)
+        logger.info(f"[商品池] 高佣榜补充 → {len(recommend)} 条")
+
+        # ── 价格过滤 ────────────────────────────
+        filtered = fetcher.filter_by_price(all_goods, price_min, price_max)
+        logger.info(
+            f"[商品池] 价格过滤后 {len(filtered)}/{len(all_goods)} 条"
+        )
+
+        # ── 写库 ────────────────────────────────
+        stats = fetcher.upsert_to_db(filtered, run_date)
+        logger.info(
+            f"[商品池] 入库完成 | 新增 {stats['new']}  更新 {stats['updated']}"
+            f"  错误 {stats['errors']}"
+        )
+
+        # ── 自动预打分 ──────────────────────────
+        if stats["new"] > 0:
+            scored = fetcher.auto_score_new_goods(run_date)
+            logger.info(f"[商品池] 自动预打分 {scored} 件（4/13维，待人工补全）")
+
+        # ── 降级提示 ────────────────────────────
+        if stats["new"] == 0 and stats["errors"] > 3:
+            log_human_required(
+                logger,
+                "商品抓取异常",
+                f"API 错误 {stats['errors']} 次且无新商品入库，"
+                "请检查 PDD API 连通性或手动录入 product_pool 表",
+            )
+
+        log_task_end(
+            logger,
+            "候选商品池刷新",
+            True,
+            f"新增 {stats['new']} 条，更新 {stats['updated']} 条",
+        )
         return True
+
     except Exception as e:
         from utils.logger import log_exception
         log_exception(logger, "商品池刷新失败", e)
-        return False
+        logger.warning("[商品池] API 完全失败，降级为手动模式")
+        log_human_required(
+            logger, "手动录入商品",
+            "自动抓取失败，请手动将候选商品录入 product_pool 表后继续"
+        )
+        return False  # 返回 False 但不 raise，后续 task 继续执行
 
 
 def task_product_scoring(run_date: str, config: dict) -> bool:
@@ -120,7 +191,6 @@ def task_content_generation(run_date: str, config: dict) -> bool:
     log_task_start(logger, "双平台内容生成", {"date": run_date})
     try:
         import sqlite3
-        from content.templates import ScriptGenerator, XHSGenerator
 
         db_path = ROOT / config.get("paths", {}).get("db", "data/db/main.db")
         if not db_path.exists():
@@ -150,8 +220,15 @@ def task_content_generation(run_date: str, config: dict) -> bool:
             ["pain_point", "scene", "contrast", "list"])
         platforms = config.get("content", {}).get("platforms", ["douyin", "xiaohongshu"])
 
-        douyin_gen = ScriptGenerator()
-        xhs_gen = XHSGenerator()
+        # ── B阶段：使用 LLM 生成器（失败自动降级模板引擎）──
+        from content.llm_generator import LLMContentGenerator
+        import json as _json
+
+        llm_gen = LLMContentGenerator(config)
+        logger.info(
+            f"[内容生成] 生成器模式: "
+            f"{'LLM（DeepSeek）' if llm_gen._llm_ok else '模板引擎（降级）'}"
+        )
 
         douyin_count = 0
         xhs_count = 0
@@ -164,24 +241,35 @@ def task_content_generation(run_date: str, config: dict) -> bool:
             if "douyin" in platforms:
                 for stype in script_types:
                     try:
-                        script = douyin_gen.generate(p, stype)
-                        storyboard_json = __import__('json').dumps(
-                            [s.__dict__ for s in script.storyboards], ensure_ascii=False)
-                        cur.execute("""
+                        script = llm_gen.generate_douyin(p, stype)
+                        storyboard_json = _json.dumps(
+                            [s.__dict__ for s in script.storyboards],
+                            ensure_ascii=False,
+                        )
+                        gen_method = (
+                            "llm" if script.template_version.startswith("llm")
+                            else "template"
+                        )
+                        cur.execute(
+                            """
                             INSERT INTO content_tasks
                             (product_id, task_date, platform, script_type,
                              title, cover_copy, hook_3s, storyboard,
                              subtitle, voiceover, cta,
                              pub_time_suggest, mount_suggest, compliance_check,
-                             product_category, status, gen_method)
-                            VALUES (?,?,?,?, ?,?,?,?, ?,?,?, ?,?,?, ?,?,?)
-                        """, (
-                            p["id"], run_date, "douyin", stype,
-                            script.title, script.cover_copy, script.hook_3s, storyboard_json,
-                            script.full_subtitle, script.voiceover, script.cta,
-                            script.pub_time_suggest, script.mount_suggest, script.compliance_notes,
-                            script.product_category, "draft", "ai",
-                        ))
+                             status, gen_method)
+                            VALUES (?,?,?,?, ?,?,?,?, ?,?,?, ?,?,?, ?,?)
+                            """,
+                            (
+                                p["id"], run_date, "douyin", stype,
+                                script.title, script.cover_copy,
+                                script.hook_3s, storyboard_json,
+                                script.full_subtitle, script.voiceover, script.cta,
+                                script.pub_time_suggest, script.mount_suggest,
+                                script.compliance_notes,
+                                "draft", gen_method,
+                            ),
+                        )
                         douyin_count += 1
                     except Exception as e:
                         logger.warning(f"  [抖音] {stype} 生成失败: {e}")
@@ -190,26 +278,42 @@ def task_content_generation(run_date: str, config: dict) -> bool:
             if "xiaohongshu" in platforms:
                 for ntype in script_types:
                     try:
-                        import json
-                        note = xhs_gen.generate(p, ntype)
-                        images_json = json.dumps(
-                            [img.__dict__ for img in note.images], ensure_ascii=False)
-                        hashtags_json = json.dumps(note.hashtags, ensure_ascii=False)
-                        cur.execute("""
+                        note = llm_gen.generate_xhs(p, ntype)
+                        hashtags_json = _json.dumps(
+                            note.hashtags, ensure_ascii=False
+                        )
+                        images_json = _json.dumps(
+                            [img.__dict__ for img in note.images],
+                            ensure_ascii=False,
+                        )
+                        gen_method = (
+                            "llm" if note.template_version.startswith("llm")
+                            else "template"
+                        )
+                        # 小红书内容：cover_title → xhs_body 中，body_text → xhs_body
+                        xhs_body = (
+                            f"【{note.cover_title}】\n\n{note.body_text}"
+                        )
+                        cur.execute(
+                            """
                             INSERT INTO content_tasks
                             (product_id, task_date, platform, script_type,
-                             cover_title, cover_subtitle, body_text,
-                             hashtags, img_count, images_spec, link_placement,
+                             title, cover_copy,
+                             xhs_body, xhs_hashtags, xhs_img_count, xhs_img_guide,
                              cta, pub_time_suggest, compliance_check,
-                             product_category, status, gen_method)
-                            VALUES (?,?,?,?, ?,?,?, ?,?,?,?, ?,?,?, ?,?,?)
-                        """, (
-                            p["id"], run_date, "xiaohongshu", ntype,
-                            note.cover_title, note.cover_subtitle, note.body_text,
-                            hashtags_json, note.img_count, images_json, note.link_placement,
-                            note.cta, note.pub_time_suggest, note.compliance_notes,
-                            note.product_category, "draft", "ai",
-                        ))
+                             status, gen_method)
+                            VALUES (?,?,?,?, ?,?, ?,?,?,?, ?,?,?, ?,?)
+                            """,
+                            (
+                                p["id"], run_date, "xiaohongshu", ntype,
+                                note.cover_title, note.cover_subtitle,
+                                xhs_body, hashtags_json,
+                                note.img_count, images_json,
+                                note.cta, note.pub_time_suggest,
+                                note.compliance_notes,
+                                "draft", gen_method,
+                            ),
+                        )
                         xhs_count += 1
                     except Exception as e:
                         logger.warning(f"  [小红书] {ntype} 生成失败: {e}")
@@ -232,20 +336,87 @@ def task_content_generation(run_date: str, config: dict) -> bool:
 
 def task_compliance_check(run_date: str, config: dict) -> bool:
     """
-    任务5：合规自动检查
+    任务5：合规自动检查（B阶段：接入真实关键词扫描）
     输入：content_tasks 中 status='draft' 的脚本
-    输出：compliance_check 字段更新
-    ✅ 人工节点：任何合规疑问都必须人工最终确认
+    输出：compliance_check 字段更新（命中词 + 风险等级）
+    ✅ 人工节点：自动扫描仅作初筛，人工必须最终确认
     """
+    import sqlite3 as _sqlite3
     log_task_start(logger, "合规检查", {"date": run_date})
     try:
         forbidden = config.get("compliance", {}).get("forbidden_keywords", [])
-        logger.info(f"[合规] 检查禁止关键词（{len(forbidden)}个）")
-        logger.info(f"[合规] 高风险类目: {config.get('compliance', {}).get('high_risk_categories', [])}")
-        log_human_required(logger, "合规审核",
-                          "自动检查仅作初筛，人工必须最终确认所有脚本内容符合平台规则")
-        log_task_end(logger, "合规检查", True, "合规检查逻辑待完善")
+        warning_kws = config.get("compliance", {}).get("warning_keywords", [])
+
+        logger.info(
+            f"[合规] 违禁词 {len(forbidden)} 个 | 预警词 {len(warning_kws)} 个"
+        )
+
+        db_path = str(ROOT / config.get("paths", {}).get("db", "data/db/main.db"))
+        conn = _sqlite3.connect(db_path)
+        conn.row_factory = _sqlite3.Row
+        cur = conn.cursor()
+
+        # 获取今日 draft 状态的内容
+        cur.execute(
+            """
+            SELECT id, platform, title, cover_copy, hook_3s, subtitle,
+                   voiceover, xhs_body
+            FROM content_tasks
+            WHERE task_date=? AND status='draft'
+            """,
+            (run_date,),
+        )
+        tasks = cur.fetchall()
+        logger.info(f"[合规] 扫描今日 draft 内容 {len(tasks)} 条")
+
+        blocked_count = 0
+        warning_count = 0
+
+        for task in tasks:
+            task_id = task["id"]
+            # 拼接所有文本字段
+            all_text = " ".join(
+                str(task[f]) for f in
+                ["title", "cover_copy", "hook_3s", "subtitle", "voiceover", "xhs_body"]
+                if task[f]
+            )
+
+            # 检查违禁词（硬阻断）
+            blocked_hits = [kw for kw in forbidden if kw in all_text]
+            # 检查预警词（软警告）
+            warning_hits = [kw for kw in warning_kws if kw in all_text]
+
+            if blocked_hits:
+                note = f"🚫 违禁词命中（阻断）：{blocked_hits}，必须人工修改后方可发布"
+                blocked_count += 1
+            elif warning_hits:
+                note = f"⚠️ 预警词命中：{warning_hits}，建议人工确认"
+                warning_count += 1
+            else:
+                note = "✅ 自动扫描通过（人工最终确认后可发布）"
+
+            cur.execute(
+                "UPDATE content_tasks SET compliance_check=? WHERE id=?",
+                (note, task_id),
+            )
+
+        conn.commit()
+        conn.close()
+
+        logger.info(
+            f"[合规] 扫描完成 | 违禁词命中 {blocked_count} 条 | 预警词命中 {warning_count} 条"
+        )
+        log_human_required(
+            logger,
+            "合规最终审核",
+            f"自动扫描完成：{blocked_count} 条违禁词命中需修改，"
+            f"{warning_count} 条有预警词，"
+            f"请人工逐条审核所有 draft 内容后再进入发布流程",
+        )
+        log_task_end(logger, "合规检查", True,
+                     f"自动扫描 {len(tasks)} 条，违禁 {blocked_count}，预警 {warning_count}")
         return True
+
     except Exception as e:
         from utils.logger import log_exception
         log_exception(logger, "合规检查失败", e)
