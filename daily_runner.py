@@ -237,11 +237,14 @@ def task_content_generation(run_date: str, config: dict) -> bool:
             p = dict(prod)
             logger.info(f"[内容生成] 处理商品 id={p['id']} 《{p['title'][:20]}》")
 
-            # ── 抖音脚本 ──────────────────────────────
+            # ── 抖音脚本（批量：1次API生成4种类型）──────
             if "douyin" in platforms:
-                for stype in script_types:
-                    try:
-                        script = llm_gen.generate_douyin(p, stype)
+                try:
+                    # v2.0 批量接口：1次调用生成全部4种类型
+                    all_scripts = llm_gen.generate_all_douyin(p)
+                    for stype, script in all_scripts.items():
+                        if stype not in script_types:
+                            continue
                         storyboard_json = _json.dumps(
                             [s.__dict__ for s in script.storyboards],
                             ensure_ascii=False,
@@ -271,14 +274,16 @@ def task_content_generation(run_date: str, config: dict) -> bool:
                             ),
                         )
                         douyin_count += 1
-                    except Exception as e:
-                        logger.warning(f"  [抖音] {stype} 生成失败: {e}")
+                except Exception as e:
+                    logger.warning(f"  [抖音] 批量生成失败: {e}")
 
-            # ── 小红书图文笔记 ────────────────────────
+            # ── 小红书图文笔记（批量：1次API生成4种类型）──
             if "xiaohongshu" in platforms:
-                for ntype in script_types:
-                    try:
-                        note = llm_gen.generate_xhs(p, ntype)
+                try:
+                    all_notes = llm_gen.generate_all_xhs(p)
+                    for ntype, note in all_notes.items():
+                        if ntype not in script_types:
+                            continue
                         hashtags_json = _json.dumps(
                             note.hashtags, ensure_ascii=False
                         )
@@ -290,10 +295,7 @@ def task_content_generation(run_date: str, config: dict) -> bool:
                             "llm" if note.template_version.startswith("llm")
                             else "template"
                         )
-                        # 小红书内容：cover_title → xhs_body 中，body_text → xhs_body
-                        xhs_body = (
-                            f"【{note.cover_title}】\n\n{note.body_text}"
-                        )
+                        xhs_body = f"【{note.cover_title}】\n\n{note.body_text}"
                         cur.execute(
                             """
                             INSERT INTO content_tasks
@@ -315,8 +317,8 @@ def task_content_generation(run_date: str, config: dict) -> bool:
                             ),
                         )
                         xhs_count += 1
-                    except Exception as e:
-                        logger.warning(f"  [小红书] {ntype} 生成失败: {e}")
+                except Exception as e:
+                    logger.warning(f"  [小红书] 批量生成失败: {e}")
 
         conn.commit()
         conn.close()
